@@ -1,4 +1,8 @@
 data = "test"
+optional_field = ""
+number_field = 0
+toml_specific_field = true
+array = [1, 2, 3]
 
-[another]
-value = "data"
+[nested]
+key = "value"

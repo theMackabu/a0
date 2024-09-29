@@ -1,1 +1,9 @@
-{ "data": "test", "another_test": { "value": "data" } }
+{
+	"data": "test",
+	"optional_field": null,
+	"number_field": 0,
+	"nested": {
+		"key": "value"
+	},
+	"array": [1, 2, 3]
+}

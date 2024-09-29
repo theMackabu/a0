@@ -1,7 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 use syn::{parse::Parse, parse::ParseStream, parse_macro_input, DeriveInput, LitStr, Token};
 
 struct GenerateArgs {
@@ -62,7 +61,11 @@ fn generate_field_info(value: &serde_json::Value, parent_name: &str) -> Vec<(syn
                     serde_json::Value::Array(arr) => {
                         if let Some(first) = arr.first() {
                             let (inner_type, _) = generate_field_type(first, &format!("{}_{}", parent_name, key));
-                            (quote!(Vec<#inner_type>), quote!(vec![]))
+                            let values = arr.iter().map(|v| {
+                                let (_, value) = generate_field_type(v, &format!("{}_{}", parent_name, key));
+                                value
+                            });
+                            (quote!(Vec<#inner_type>), quote!(vec![#(#values),*]))
                         } else {
                             (quote!(Vec<serde_json::Value>), quote!(vec![]))
                         }
@@ -82,13 +85,28 @@ fn generate_field_info(value: &serde_json::Value, parent_name: &str) -> Vec<(syn
 fn generate_field_type(value: &serde_json::Value, parent_name: &str) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     match value {
         serde_json::Value::Null => (quote!(Option<String>), quote!(None)),
-        serde_json::Value::Bool(_) => (quote!(bool), quote!(false)),
-        serde_json::Value::Number(_) => (quote!(f64), quote!(0.0)),
-        serde_json::Value::String(_) => (quote!(String), quote!(String::new())),
+        serde_json::Value::Bool(b) => (quote!(bool), quote!(#b)),
+        serde_json::Value::Number(n) => {
+            if n.is_i64() {
+                let i = n.as_i64().unwrap();
+                (quote!(i64), quote!(#i))
+            } else if n.is_u64() {
+                let u = n.as_u64().unwrap();
+                (quote!(u64), quote!(#u))
+            } else {
+                let f = n.as_f64().unwrap();
+                (quote!(f64), quote!(#f))
+            }
+        }
+        serde_json::Value::String(s) => (quote!(String), quote!(#s.to_string())),
         serde_json::Value::Array(arr) => {
             if let Some(first) = arr.first() {
                 let (inner_type, _) = generate_field_type(first, parent_name);
-                (quote!(Vec<#inner_type>), quote!(vec![]))
+                let values = arr.iter().map(|v| {
+                    let (_, value) = generate_field_type(v, parent_name);
+                    value
+                });
+                (quote!(Vec<#inner_type>), quote!(vec![#(#values),*]))
             } else {
                 (quote!(Vec<serde_json::Value>), quote!(vec![]))
             }
@@ -141,9 +159,10 @@ fn generate_nested_structs(value: &serde_json::Value, parent_name: &str) -> Vec<
 pub fn generate(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as GenerateArgs);
     let input = parse_macro_input!(item as DeriveInput);
-    let struct_name = &input.ident;
 
+    let struct_name = &input.ident;
     let file_path = &args.file_path;
+
     let format = args
         .format
         .unwrap_or_else(|| Path::new(file_path).extension().and_then(|os_str| os_str.to_str()).unwrap_or("").to_string());
@@ -161,16 +180,13 @@ pub fn generate(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fields = generate_field_info(&parsed_value, &struct_name.to_string());
     let field_names = fields.iter().map(|(name, _, _)| name);
     let field_types = fields.iter().map(|(_, ty, _)| ty);
-    let field_initializers = fields.iter().map(|(name, _, value)| {
-        quote! { #name: #value }
-    });
-
+    let field_initializers = fields.iter().map(|(name, _, value)| quote!(#name: #value));
     let nested_structs = generate_nested_structs(&parsed_value, &struct_name.to_string());
 
     let expanded = quote! {
         #(#nested_structs)*
 
-        #[derive(Debug, Clone, Default, Eq, PartialEq)]
+        #[derive(Debug, Clone, Default, PartialEq)]
         pub struct #struct_name {
             #(pub #field_names: #field_types,)*
         }
