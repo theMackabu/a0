@@ -9,6 +9,9 @@ path = "macro.rs"
 proc-macro = true
 
 [dependencies]
+toml = "0.8.19"
 quote = "1.0.37"
+serde_yaml = "0.9.34"
 proc-macro2 = "1.0.86"
+serde_json = "1.0.128"
 syn = { version = "2.0.79", features = ["full"] }

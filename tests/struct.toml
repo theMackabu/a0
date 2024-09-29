@@ -1,0 +1,4 @@
+data = "test"
+
+[another]
+value = "data"
