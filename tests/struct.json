@@ -1,6 +1,6 @@
 {
 	"data": "test",
-	"optional_field": null,
+	"optional_field": { "opt_none": true },
 	"number_field": 0,
 	"nested": {
 		"key": "value"

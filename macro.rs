@@ -1,5 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
+use serde_json::Value;
 use std::{fs, path::Path};
 use syn::{parse::Parse, parse::ParseStream, parse_macro_input, DeriveInput, LitStr, Token, Visibility};
 
@@ -27,7 +28,7 @@ fn to_pascal_case(s: &str) -> String {
         .collect()
 }
 
-fn parse_content(content: &str, format: &str) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+fn parse_content(content: &str, format: &str) -> Result<Value, Box<dyn std::error::Error>> {
     match format {
         "json" => Ok(serde_json::from_str(content)?),
         "yaml" | "yml" => Ok(serde_yaml::from_str(content)?),
@@ -36,45 +37,13 @@ fn parse_content(content: &str, format: &str) -> Result<serde_json::Value, Box<d
     }
 }
 
-fn generate_field_info(value: &serde_json::Value, parent_name: &str) -> Vec<(syn::Ident, syn::Type, proc_macro2::TokenStream)> {
+fn generate_field_info(value: &Value, parent_name: &str) -> Vec<(syn::Ident, syn::Type, proc_macro2::TokenStream)> {
     match value {
-        serde_json::Value::Object(map) => map
+        Value::Object(map) => map
             .iter()
             .map(|(key, value)| {
                 let field_name = format_ident!("{}", key);
-                let (field_type, field_value) = match value {
-                    serde_json::Value::Null => (quote!(Option<Value>), quote!(None)),
-                    serde_json::Value::Bool(b) => (quote!(bool), quote!(#b)),
-                    serde_json::Value::Number(n) => {
-                        if n.is_i64() {
-                            let i = n.as_i64().unwrap();
-                            (quote!(i64), quote!(#i))
-                        } else if n.is_u64() {
-                            let u = n.as_u64().unwrap();
-                            (quote!(u64), quote!(#u))
-                        } else {
-                            let f = n.as_f64().unwrap();
-                            (quote!(f64), quote!(#f))
-                        }
-                    }
-                    serde_json::Value::String(s) => (quote!(String), quote!(#s.to_string())),
-                    serde_json::Value::Array(arr) => {
-                        if let Some(first) = arr.first() {
-                            let (inner_type, _) = generate_field_type(first, &format!("{}_{}", parent_name, key));
-                            let values = arr.iter().map(|v| {
-                                let (_, value) = generate_field_type(v, &format!("{}_{}", parent_name, key));
-                                value
-                            });
-                            (quote!(Vec<#inner_type>), quote!(vec![#(#values),*]))
-                        } else {
-                            (quote!(Vec<serde_json::Value>), quote!(vec![]))
-                        }
-                    }
-                    serde_json::Value::Object(_) => {
-                        let nested_name = format_ident!("{}{}", parent_name, to_pascal_case(key));
-                        (quote!(#nested_name), quote!(#nested_name::new()))
-                    }
-                };
+                let (field_type, field_value) = generate_field_type(value, &format!("{}{}", parent_name, to_pascal_case(key)));
                 (field_name, syn::parse_str(&field_type.to_string()).unwrap(), field_value)
             })
             .collect(),
@@ -82,11 +51,12 @@ fn generate_field_info(value: &serde_json::Value, parent_name: &str) -> Vec<(syn
     }
 }
 
-fn generate_field_type(value: &serde_json::Value, parent_name: &str) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+fn generate_field_type(value: &Value, parent_name: &str) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     match value {
-        serde_json::Value::Null => (quote!(Option<String>), quote!(None)),
-        serde_json::Value::Bool(b) => (quote!(bool), quote!(#b)),
-        serde_json::Value::Number(n) => {
+        Value::Bool(b) => (quote!(bool), quote!(#b)),
+        Value::String(s) => (quote!(String), quote!(#s.to_string())),
+
+        Value::Number(n) => {
             if n.is_i64() {
                 let i = n.as_i64().unwrap();
                 (quote!(i64), quote!(#i))
@@ -98,8 +68,8 @@ fn generate_field_type(value: &serde_json::Value, parent_name: &str) -> (proc_ma
                 (quote!(f64), quote!(#f))
             }
         }
-        serde_json::Value::String(s) => (quote!(String), quote!(#s.to_string())),
-        serde_json::Value::Array(arr) => {
+
+        Value::Array(arr) => {
             if let Some(first) = arr.first() {
                 let (inner_type, _) = generate_field_type(first, parent_name);
                 let values = arr.iter().map(|v| {
@@ -108,22 +78,33 @@ fn generate_field_type(value: &serde_json::Value, parent_name: &str) -> (proc_ma
                 });
                 (quote!(Vec<#inner_type>), quote!(vec![#(#values),*]))
             } else {
-                (quote!(Vec<serde_json::Value>), quote!(vec![]))
+                (quote!(Vec<Value>), quote!(vec![]))
             }
         }
-        serde_json::Value::Object(_) => {
-            let nested_name = format_ident!("{}", parent_name);
-            (quote!(#nested_name), quote!(#nested_name::default()))
+
+        Value::Object(obj) => {
+            if obj.contains_key("opt_some") {
+                let (inner_type, inner_value) = generate_field_type(&obj["opt_some"], parent_name);
+                (quote!(Option<#inner_type>), quote!(Some(#inner_value)))
+            } else if obj.contains_key("opt_none") {
+                let (inner_type, _) = generate_field_type(&obj["opt_none"], parent_name);
+                (quote!(Option<#inner_type>), quote!(None))
+            } else {
+                let nested_name = format_ident!("{}", parent_name);
+                (quote!(#nested_name), quote!(#nested_name::default()))
+            }
         }
+
+        field => panic!("Cannot use {field} in the struct generator"),
     }
 }
 
-fn generate_nested_structs(value: &serde_json::Value, parent_name: &str, vis: &Visibility) -> Vec<proc_macro2::TokenStream> {
+fn generate_nested_structs(value: &Value, parent_name: &str, vis: &Visibility) -> Vec<proc_macro2::TokenStream> {
     match value {
-        serde_json::Value::Object(map) => {
+        Value::Object(map) => {
             let mut structs = vec![];
             for (key, value) in map {
-                if let serde_json::Value::Object(_) = value {
+                if let Value::Object(_) = value {
                     let nested_name = format_ident!("{}{}", parent_name, to_pascal_case(key));
                     let nested_fields = generate_field_info(value, &nested_name.to_string());
                     let nested_field_names = nested_fields.iter().map(|(name, _, _)| name);

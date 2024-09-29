@@ -1,7 +1,6 @@
 data = "test"
-optional_field = ""
+optional_field = { opt_none = true }
 number_field = 0
-toml_specific_field = true
 array = [1, 2, 3]
 
 [nested]
