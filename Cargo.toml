@@ -2,6 +2,8 @@
 name = "a0"
 version = "0.0.1"
 edition = "2021"
+license = "MIT"
+description = "generate structs and their values from external data"
 
 [lib]
 name = "a0"
