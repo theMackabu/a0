@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use std::{fs, path::Path};
-use syn::{parse::Parse, parse::ParseStream, parse_macro_input, DeriveInput, LitStr, Token};
+use syn::{parse::Parse, parse::ParseStream, parse_macro_input, DeriveInput, LitStr, Token, Visibility};
 
 struct GenerateArgs {
     file_path: String,
@@ -118,7 +118,7 @@ fn generate_field_type(value: &serde_json::Value, parent_name: &str) -> (proc_ma
     }
 }
 
-fn generate_nested_structs(value: &serde_json::Value, parent_name: &str) -> Vec<proc_macro2::TokenStream> {
+fn generate_nested_structs(value: &serde_json::Value, parent_name: &str, vis: &Visibility) -> Vec<proc_macro2::TokenStream> {
     match value {
         serde_json::Value::Object(map) => {
             let mut structs = vec![];
@@ -133,8 +133,8 @@ fn generate_nested_structs(value: &serde_json::Value, parent_name: &str) -> Vec<
                     });
                     let nested_struct = quote! {
                         #[derive(Debug, Clone, Default, Eq, PartialEq)]
-                        pub struct #nested_name {
-                            #(pub #nested_field_names: #nested_field_types,)*
+                        #vis struct #nested_name {
+                            #(#vis #nested_field_names: #nested_field_types,)*
                         }
 
                         impl #nested_name {
@@ -146,7 +146,7 @@ fn generate_nested_structs(value: &serde_json::Value, parent_name: &str) -> Vec<
                         }
                     };
                     structs.push(nested_struct);
-                    structs.extend(generate_nested_structs(value, &nested_name.to_string()));
+                    structs.extend(generate_nested_structs(value, &nested_name.to_string(), vis));
                 }
             }
             structs
@@ -162,6 +162,7 @@ pub fn generate(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let struct_name = &input.ident;
     let file_path = &args.file_path;
+    let vis = &input.vis;
 
     let format = args
         .format
@@ -181,14 +182,14 @@ pub fn generate(attr: TokenStream, item: TokenStream) -> TokenStream {
     let field_names = fields.iter().map(|(name, _, _)| name);
     let field_types = fields.iter().map(|(_, ty, _)| ty);
     let field_initializers = fields.iter().map(|(name, _, value)| quote!(#name: #value));
-    let nested_structs = generate_nested_structs(&parsed_value, &struct_name.to_string());
+    let nested_structs = generate_nested_structs(&parsed_value, &struct_name.to_string(), vis);
 
     let expanded = quote! {
         #(#nested_structs)*
 
         #[derive(Debug, Clone, Default, PartialEq)]
-        pub struct #struct_name {
-            #(pub #field_names: #field_types,)*
+        #vis struct #struct_name {
+            #(#vis #field_names: #field_types,)*
         }
 
         impl #struct_name {
