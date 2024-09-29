@@ -43,7 +43,7 @@ fn generate_field_info(value: &serde_json::Value, parent_name: &str) -> Vec<(syn
             .map(|(key, value)| {
                 let field_name = format_ident!("{}", key);
                 let (field_type, field_value) = match value {
-                    serde_json::Value::Null => (quote!(Option<String>), quote!(None)),
+                    serde_json::Value::Null => (quote!(Option<Value>), quote!(None)),
                     serde_json::Value::Bool(b) => (quote!(bool), quote!(#b)),
                     serde_json::Value::Number(n) => {
                         if n.is_i64() {
